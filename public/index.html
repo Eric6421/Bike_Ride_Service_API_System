@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bike Ride Service API Tester</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 24px;
+        line-height: 1.5;
+        max-width: 900px;
+      }
+      h1 {
+        margin-bottom: 8px;
+      }
+      .section {
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 12px 0;
+      }
+      label {
+        display: block;
+        margin-top: 8px;
+        font-weight: 600;
+      }
+      input {
+        width: 100%;
+        max-width: 340px;
+        padding: 8px;
+        margin-top: 4px;
+      }
+      select {
+        width: 100%;
+        max-width: 360px;
+        padding: 8px;
+        margin-top: 4px;
+      }
+      button {
+        margin-top: 12px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      pre {
+        background: #f6f8fa;
+        border-radius: 6px;
+        padding: 12px;
+        overflow: auto;
+      }
+      .hint {
+        color: #555;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Bike Ride Service API Tester</h1>
+    <p class="hint">
+      Use this page to test your backend endpoints in the browser. API base URL:
+      <code>http://localhost:3000</code>
+    </p>
+
+    <div class="section">
+      <h2>1) Start Ride</h2>
+      <label for="customRideId">Custom Ride ID (optional)</label>
+      <input id="customRideId" type="number" min="1" placeholder="Leave empty for auto-generated ID" />
+      <label for="elapsedMinutes">Already Ridden Minutes (for testing)</label>
+      <input id="elapsedMinutes" type="number" min="0" value="0" />
+      <button id="startRideButton">POST /ride/start</button>
+    </div>
+
+    <div class="section">
+      <h2>2) End Ride</h2>
+      <label for="rideId">Ride ID</label>
+      <input id="rideId" type="number" value="1" />
+      <button id="endRideButton">POST /ride/end</button>
+    </div>
+
+    <div class="section">
+      <h2>3) Get Ride</h2>
+      <label for="rideList">Available Ride IDs</label>
+      <select id="rideList" size="6"></select>
+      <div>
+        <button id="refreshRideListButton">Refresh Ride List</button>
+        <button id="getRideButton">GET Selected Ride Detail</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>4) Get Cost</h2>
+      <label for="costRideList">Available Ride IDs</label>
+      <select id="costRideList" size="6"></select>
+      <div>
+        <button id="refreshCostRideListButton">Refresh Cost Ride List</button>
+        <button id="getCostButton">GET Selected Ride Cost</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Response</h2>
+      <pre id="result">No requests yet.</pre>
+    </div>
+
+    <script>
+      /**
+       * Defines the API base URL.
+       * Keeping it in one place makes endpoint changes easy.
+       */
+      const API_BASE_URL = "http://localhost:3000";
+
+      /**
+       * Reads and trims a text input value by element ID.
+       * @param {string} id - Input element ID.
+       * @returns {string} Trimmed input value.
+       */
+      function getInputValue(id) {
+        return document.getElementById(id).value.trim();
+      }
+
+      /**
+       * Writes formatted request/response output to the result panel.
+       * @param {string} title - Human-readable action title.
+       * @param {number} status - HTTP status code.
+       * @param {unknown} payload - Parsed JSON response payload.
+       * @returns {void}
+       */
+      function renderResult(title, status, payload) {
+        const result = document.getElementById("result");
+        result.textContent =
+          `${title}\nHTTP ${status}\n\n` +
+          JSON.stringify(payload, null, 2);
+      }
+
+      /**
+       * Rebuilds the available ride ID scroll list from backend data.
+       * @param {Array<{rideId:number,status:string,startTime:string}>} rides - Ride summaries.
+       * @returns {void}
+       */
+      function renderRideList(rides) {
+        const rideList = document.getElementById("rideList");
+        rideList.innerHTML = "";
+
+        if (!Array.isArray(rides) || rides.length === 0) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "No rides available";
+          rideList.appendChild(option);
+          return;
+        }
+
+        rides.forEach((ride) => {
+          const option = document.createElement("option");
+          option.value = String(ride.rideId);
+          option.textContent = `Ride ${ride.rideId} | ${ride.status}`;
+          rideList.appendChild(option);
+        });
+      }
+
+      /**
+       * Rebuilds the ride ID list used by Get Cost section.
+       * @param {Array<{rideId:number,status:string,startTime:string}>} rides - Ride summaries.
+       * @returns {void}
+       */
+      function renderCostRideList(rides) {
+        const costRideList = document.getElementById("costRideList");
+        costRideList.innerHTML = "";
+
+        if (!Array.isArray(rides) || rides.length === 0) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "No rides available";
+          costRideList.appendChild(option);
+          return;
+        }
+
+        rides.forEach((ride) => {
+          const option = document.createElement("option");
+          option.value = String(ride.rideId);
+          option.textContent = `Ride ${ride.rideId} | ${ride.status}`;
+          costRideList.appendChild(option);
+        });
+      }
+
+      /**
+       * Reads selected ride id from the scroll list.
+       * @returns {number|null} Selected ride id or null when nothing is selected.
+       */
+      function getSelectedRideId() {
+        const selectedValue = document.getElementById("rideList").value;
+        if (!selectedValue) {
+          return null;
+        }
+
+        const rideId = Number(selectedValue);
+        if (!Number.isInteger(rideId) || rideId <= 0) {
+          return null;
+        }
+
+        return rideId;
+      }
+
+      /**
+       * Reads selected ride id from the Get Cost scroll list.
+       * @returns {number|null} Selected ride id or null when nothing is selected.
+       */
+      function getSelectedCostRideId() {
+        const selectedValue = document.getElementById("costRideList").value;
+        if (!selectedValue) {
+          return null;
+        }
+
+        const rideId = Number(selectedValue);
+        if (!Number.isInteger(rideId) || rideId <= 0) {
+          return null;
+        }
+
+        return rideId;
+      }
+
+      /**
+       * Performs a JSON API request and displays the result.
+       * @param {string} title - Action label for UI output.
+       * @param {string} endpoint - API path such as /ride/start.
+       * @param {RequestInit} options - Fetch options.
+       * @returns {Promise<void>}
+       */
+      async function requestJson(title, endpoint, options = {}) {
+        try {
+          const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
+          const payload = await response.json();
+          renderResult(title, response.status, payload);
+
+          if (title.includes("Start Ride") && response.ok && payload.rideId) {
+            // Convenience behavior: auto-fill returned rideId for follow-up actions.
+            document.getElementById("rideId").value = String(payload.rideId);
+            await refreshRideLists();
+          }
+        } catch (error) {
+          renderResult(title, 0, {
+            error: "Network or parsing error.",
+            details: String(error),
+          });
+        }
+      }
+
+      /**
+       * Sends POST /ride/start using elapsedMinutes.
+       * elapsedMinutes is optional and helps test pricing quickly.
+       * @returns {Promise<void>}
+       */
+      async function startRide() {
+        const customRideIdText = getInputValue("customRideId");
+        const customRideId = customRideIdText === "" ? undefined : Number(customRideIdText);
+        const elapsedMinutes = Number(getInputValue("elapsedMinutes"));
+
+        const payload = {
+          elapsedMinutes: Number.isNaN(elapsedMinutes) ? 0 : elapsedMinutes,
+        };
+
+        if (customRideIdText !== "" && Number.isInteger(customRideId) && customRideId > 0) {
+          payload.rideId = customRideId;
+        }
+
+        await requestJson("Start Ride", "/ride/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      /**
+       * Sends POST /ride/end for the currently selected ride ID.
+       * @returns {Promise<void>}
+       */
+      async function endRide() {
+        await requestJson("End Ride", "/ride/end", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rideId: Number(getInputValue("rideId")),
+          }),
+        });
+
+        await refreshRideLists();
+      }
+
+      /**
+       * Loads available rides for the ride ID scroll list.
+       * @returns {Promise<void>}
+       */
+      async function refreshRideLists() {
+        try {
+          const response = await fetch(`${API_BASE_URL}/ride`);
+          const payload = await response.json();
+
+          if (!response.ok) {
+            renderResult("Refresh Ride List", response.status, payload);
+            return;
+          }
+
+          renderRideList(payload.rides);
+          renderCostRideList(payload.rides);
+
+          const selectedRideId = getSelectedRideId();
+          const selectedCostRideId = getSelectedCostRideId();
+          const chosenRideId = selectedRideId ?? selectedCostRideId;
+          if (chosenRideId) {
+            document.getElementById("rideId").value = String(chosenRideId);
+          }
+        } catch (error) {
+          renderResult("Refresh Ride List", 0, {
+            error: "Failed to load ride list.",
+            details: String(error),
+          });
+        }
+      }
+
+      /**
+       * Sends GET /ride/:id for the currently selected ride ID.
+       * @returns {Promise<void>}
+       */
+      async function getRide() {
+        const selectedRideId = getSelectedRideId();
+        const rideId = selectedRideId ?? Number(getInputValue("rideId"));
+        if (selectedRideId) {
+          document.getElementById("rideId").value = String(selectedRideId);
+        }
+        await requestJson("Get Ride", `/ride/${rideId}`);
+      }
+
+      /**
+       * Sends GET /ride/:id/cost for the currently selected ride ID.
+       * @returns {Promise<void>}
+       */
+      async function getCost() {
+        const selectedCostRideId = getSelectedCostRideId();
+        const rideId = selectedCostRideId ?? Number(getInputValue("rideId"));
+        if (selectedCostRideId) {
+          document.getElementById("rideId").value = String(selectedCostRideId);
+        }
+        await requestJson("Get Cost", `/ride/${rideId}/cost`);
+      }
+
+      /**
+       * Registers click handlers for all test buttons after page load.
+       * @returns {void}
+       */
+      function registerEventHandlers() {
+        document.getElementById("startRideButton").addEventListener("click", startRide);
+        document.getElementById("endRideButton").addEventListener("click", endRide);
+        document.getElementById("getRideButton").addEventListener("click", getRide);
+        document.getElementById("getCostButton").addEventListener("click", getCost);
+        document
+          .getElementById("refreshRideListButton")
+          .addEventListener("click", refreshRideLists);
+        document
+          .getElementById("refreshCostRideListButton")
+          .addEventListener("click", refreshRideLists);
+        document.getElementById("rideList").addEventListener("change", () => {
+          const selectedRideId = getSelectedRideId();
+          if (selectedRideId) {
+            document.getElementById("rideId").value = String(selectedRideId);
+          }
+        });
+        document.getElementById("costRideList").addEventListener("change", () => {
+          const selectedRideId = getSelectedCostRideId();
+          if (selectedRideId) {
+            document.getElementById("rideId").value = String(selectedRideId);
+          }
+        });
+      }
+
+      registerEventHandlers();
+      refreshRideLists();
+    </script>
+  </body>
+</html>
